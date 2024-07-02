@@ -1,0 +1,243 @@
+---
+title: "RMarkdown_Common_Work"
+author: "Jeanne SUDOUR"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+```{r load library, echo=FALSE, message=FALSE, warning=FALSE}
+library("tidyverse")
+library("zoo")
+library("rts")
+library("ggplot2")
+library("datacheck")
+library("plotly")
+library(knitr)
+```
+
+## Introduction
+
+First, after loading the library needed, we load all the functions we will need and the data. We can print a summary of the raw data and the head of the dataframe. 
+
+```{r load functions, echo=FALSE}
+source("dimCompletenessByColumn.R")
+source("dimCompleteness.R")
+source("dimConsistencyTypeByColumn.R")
+source("dimConsistencyType.R")
+source("dimConsistencyRangeByColumn.R")
+source("dimConsistencyRange.R")
+source("dimConsistencyRules.R")
+```
+
+```{r load data}
+setwd("C:/Users/Jeanne/Desktop/Data Quality and Interoperability/Final Work/Common Work")
+datasetFileName = "201102COVID19MEXICO.csv"
+datos = read.csv(datasetFileName, header=TRUE, na.strings="", stringsAsFactors = TRUE)
+dateFormat <- '%Y-%m-%d'
+dateColumn <- 11
+```
+
+```{r}
+summary(datos)
+kable(head(datos))
+```
+
+
+```{r pour avoir des données moins lourdes}
+datos2 <- datos[1:1000,]
+```
+
+## Completness
+
+We replace the missing values (97, 98, 99) by `NA` values. We need to put the MUNICIPIO_RES variable apart and treat it differently because some of its values are 099, 098 or 097 and could be changed in `NA` with our method. Its missing values are 999, 998, and 997. For the RESULTADO_LAB variable, "4" is also a missing value.
+
+```{r missing data}
+for (i in 3:38) {
+  if (i==9) {   # MUNICIPIO_RES 
+    datos2[,i] <- gsub(pattern = "999", replacement = NA, x = datos2[,i])
+    datos2[,i] <- gsub(pattern = "998", replacement = NA, x = datos2[,i])
+    datos2[,i] <- gsub(pattern = "997", replacement = NA, x = datos2[,i])
+  }
+  else
+    datos2[,i] <- gsub(pattern = "99", replacement = NA, x = datos2[,i])
+    datos2[,i] <- gsub(pattern = "98", replacement = NA, x = datos2[,i])
+    datos2[,i] <- gsub(pattern = "97", replacement = NA, x = datos2[,i])
+    
+  if (i==4){  # RESULTADO_LAB 
+    datos2[,i] <- gsub(pattern = "4", replacement = NA, x = datos2[,i])
+  }
+}
+
+# other method (apply the function gsub to each line): 
+#datos2[] <- data.frame(lapply(datos2, function(x) (gsub("99", NA, x))))
+#datos2[] <- data.frame(lapply(datos2, function(x) (gsub("98", NA, x))))
+#datos2[] <- data.frame(lapply(datos2, function(x) (gsub("97", NA, x))))
+
+```
+
+We used the variable 'FECHA_INGRESO' that represents the date of hospitalization to build our zoo Repository and compute the completeness by month.
+
+```{r zoorepository, warning=FALSE}
+repositoryDates <- as.Date(datos2$FECHA_INGRESO,format=dateFormat)
+repository = datos2[order(repositoryDates),]
+minDate = min(repositoryDates)
+maxDate = max(repositoryDates)
+dateBatches = seq(as.Date(minDate),as.Date(maxDate),by = "month")
+zooRepository <- read.zoo(repository, format = dateFormat, index.column = dateColumn)
+```
+
+We can now compute the completeness and plot the results by month.
+
+```{r completeness}
+
+  ## Completeness by column
+resCompletenessByColumn = apply.monthly(zooRepository, FUN=dimCompletenessByColumn)
+plot(resCompletenessByColumn[, 1:18],xlab = "Date", ylab = names(resCompletenessByColumn[, 1:18]), main = "Completeness (%)", ylim=c(0,100), cex.lab=0.5)
+plot(resCompletenessByColumn[, 19:36],xlab = "Date", ylab = names(resCompletenessByColumn[, 19:36]), main = "Completeness (%)", ylim=c(0,100), cex.lab=0.5)
+  
+  ## Completeness of the dataset
+resCompleteness = apply.monthly(zooRepository, FUN=dimCompleteness)
+plot(resCompleteness,xlab = "Date", ylab = "Completeness", main = "Completeness of the dataset (%)", 
+     ylim=c(0,100), cex.lab=0.5)
+
+```
+
+We can see that the completeness of the dataset increases with time. 
+
+## Consistency
+
+First, we need to determine the type of each column and the ranges.
+
+```{r}
+hasHeader <- TRUE
+typesFileName <- 'types.csv'
+rangesFileName <- 'ranges.csv'
+types = read.csv2(typesFileName, header=hasHeader,na.strings="", stringsAsFactors = FALSE)
+ranges = read.csv2(rangesFileName, header=hasHeader,na.strings="", stringsAsFactors = TRUE)
+names(types)=names(datos)
+names(ranges)=names(datos)
+```
+
+```{r}
+for (name in names(ranges)) {
+    ranges[[name]] = switch(types[[name]],
+                                  "na" = ranges[[name]],
+                                  "string" = as.character(ranges[[name]]),
+                                 "numeric" = as.numeric(as.character(ranges[[name]])),
+                                  "date" = ranges[[name]]
+    )
+}
+```
+
+```{r}
+kable(types)
+kable(ranges)
+```
+
+Now that we have the types and the ranges of each column, we can compute the consistency.
+
+```{r consistency}
+# We remove the first column
+datos2 <- datos[1:1000,2:38]
+dateColumn <- 10
+repositoryDates <- as.Date(datos2$FECHA_INGRESO,format=dateFormat)
+repository = datos2[order(repositoryDates),]
+minDate = min(repositoryDates)
+maxDate = max(repositoryDates)
+dateBatches = seq(as.Date(minDate),as.Date(maxDate),by = "month")
+zooRepository <- read.zoo(repository, format = dateFormat, index.column = dateColumn)
+
+  ## Consistency by type and by column 
+resConsistencyTypeByColumn = apply.monthly(zooRepository, FUN=dimConsistencyTypeByColumn, types, hasHeader, dateColumn)
+plot(resConsistencyTypeByColumn,xlab = "Date", ylab = names(resConsistencyTypeByColumn),
+       main = "Consistency ratio by types", ylim=c(0,1), cex.lab=0.5)
+  
+  ## Consistency by type for the dataset
+resConsistencyType = apply.monthly(zooRepository, FUN=dimConsistencyType, types, hasHeader, dateColumn)
+plot(resConsistencyType,xlab = "Date", ylab = 'resConsistencyType',
+       main = "Consistency ratio by types", ylim=c(0,1), cex.lab=0.5)
+  
+  ## Consistency by range and by column
+resConsistencyRangeByColumn = apply.monthly(zooRepository, FUN=dimConsistencyRangeByColumn, types, ranges, hasHeader, dateColumn)
+plot(resConsistencyRangeByColumn,xlab = "Date", ylab = names(resConsistencyRangeByColumn),
+       main = "Consistency ratio by ranges", ylim=c(0,1), cex.lab=0.5)
+  
+  ## Consistency by range for the dataset
+resConsistencyRange = apply.monthly(zooRepository, FUN=dimConsistencyRange, types, ranges, hasHeader, dateColumn)
+plot(resConsistencyRange,xlab = "Date", ylab = "resConsistencyRange",
+       main = "Consistency ratio by ranges", ylim=c(0,1), cex.lab=0.5)
+
+```
+
+We can also evaluate the consistency regarding the rules we created.
+
+```{r rules, eval=FALSE}
+  ## Evaluate the rules on the dataset
+rulesFileName = 'rules.R'
+resRules = dimConsistencyRules(dataset, types, hasHeader, dateColumn, rulesFileName)
+kable(resRules)
+
+## Calculate the multivariate Consistency results
+  denominator = nrow(datasetTyped)*nrow(rules)
+  resultsRulesDataset = 1-sum(resRules[["Error.sum"]])/denominator
+```
+
+The consistency regarding the rules has a value of `r resRules`.
+
+## Distinct values for missing
+
+
+
+## Using Plotly package for plots
+
+We can make plots to visualize our data.
+
+```{r}
+#fig <- plot_ly(x = ~datos2$RESULTADO_LAB, y = ~datos2$CLASIFICACION_FINAL, mode = "markers")
+#fig
+```
+
+### Boxplot of pneumonia and the necesity to be intubated comparated to the age
+
+```{r, warning=FALSE, message=FALSE}
+fig <- plot_ly(x = ~datos2$INTUBADO, y = ~datos2$EDAD, type='box', legendgroup = ~datos2$INTUBADO)
+fig
+
+fig <- plot_ly(y = ~datos2$EDAD, x = ~datos2$NEUMONIA, type='box')
+fig
+```
+
+With the first boxplot, we can see that the patients intubated are, in average, older than the patients who don't need to be intubated. With the second one, we can see that the risk of having a pneumonia is also increased with age. 
+
+### Histogram of the dates of the diferent stages (symptoms, hospitalization and death)
+
+```{r}
+fig <- plot_ly(alpha = 0.6)
+fig <- fig %>% add_histogram(x = ~datos2$FECHA_SINTOMAS, name='FECHA SINTOMAS')
+fig <- fig %>% add_histogram(x = ~datos2$FECHA_INGRESO, name='FECHA INGRESO')
+fig <- fig %>% add_histogram(x = ~datos2$FECHA_DEF, name='FECHA DEATH')
+fig <- fig %>% layout(barmode = "overlay")
+
+fig
+```
+
+We can see that the distribution of the apparition of symptoms is followed by the curve of the hospitalizations. The distribution of the deaths follows but with a much lower proportion of patients. These distributions fit well the course of the disease.  
+
+
+## Recording linkage (finding duplicates)
+
+We can find duplicates in the dataset and remove them.
+
+```{r duplicates}
+ndup <- nrow(datos2[duplicated(datos2), ])
+datos2 <- datos2[!duplicated(datos2), ]
+```
+
+There were `r ndup` duplicates. 

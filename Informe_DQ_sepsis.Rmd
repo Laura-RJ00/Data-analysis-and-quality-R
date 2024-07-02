@@ -1,0 +1,106 @@
+---
+title: "DQ dataset_sepsis"
+author: "Laura Romero Jaque"
+output: html_document
+date: "2022-10-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load library, echo=FALSE, message=FALSE, warning=FALSE}
+library("tidyverse")
+library("zoo")
+library("rts")
+library("ggplot2")
+library("plotly")
+library("caTools")
+library(clock)
+library(tidyr)
+library(knitr)
+```
+
+## Introducción
+
+Primero, después de cargar las bibliotecas necesarias, cargamos todas las funciones que necesitaremos y los datos. Podemos imprimir un resumen de los datos sin procesar y el encabezado del marco de datos. 
+
+```{r load functions, echo=FALSE}
+source("dimCompletenessByColumn.R")
+source("dimCompleteness.R")
+#source("dimConsistencyTypeByColumn.R")
+#source("dimConsistencyType.R")
+#source("dimConsistencyRangeByColumn.R")
+#source("dimConsistencyRange.R")
+#source("dimConsistencyRules.R")
+```
+
+```{r load data}
+setwd("C:/Users/Laura/Documents/INCLIVA TRABAJO/AVI SepAsT")
+fileName = "junio 21 ITIbase.csv" 
+HasHeader = TRUE 
+
+repository_sepsis <- read.csv(fileName,header = HasHeader, na.strings="")
+N_pacientes<- nrow(repository_sepsis)
+M_variables<- ncol(repository_sepsis)
+variable_names <- colnames(repository_sepsis)
+```
+
+```{r}
+summary(repository_sepsis)
+kable(head(repository_sepsis))
+```
+## Date format
+
+Obtenemos la columna con las fechas de ingresoy vemos que hay diferentes formatos de fechas, transformamos la fecha al formato año-mes-dia con format y después con as.Date
+```{r missing data}
+dateColumn = 12
+#dateFormat = "%m/%d/%Y"
+dates <- repository_sepsis[,dateColumn] 
+
+repository_sepsis_Dates <- format(as.Date(dates,"%m/%d/%Y"),"%m/%d/%y")
+repository_sepsis_Dates <- as.Date(repository_sepsis_Dates,format= "%m/%d/%y")
+repository_sepsis [,dateColumn]<-repository_sepsis_Dates
+
+
+```
+
+Usamos la variable 'FECHAINGRES' que representa la fecha de hospitalización para construir nuestro Repositorio del zoológico y calcular la integridad por mes.
+
+```{r zoorepository, warning=FALSE}
+repository_sepsis = repository_sepsis[order(repository_sepsis_Dates),]
+minDate = min(repository_sepsis_Dates,na.rm = TRUE)
+maxDate = max(repository_sepsis_Dates,na.rm = TRUE)
+dateBatches = seq(as.Date(minDate),as.Date(maxDate),by = "month")
+repository_sepsis_noNaDates <- repository_sepsis[!(is.na(repository_sepsis$FECHAINGRES)),]
+zooRepository <- read.zoo(repository_sepsis_noNaDates,format = "%Y-%m-%d",index.column = dateColumn)
+```
+
+Cabe destacar que para ejecutar el comando read.zoo es necesario que todas las filas tengan una fecha de ingreso por lo que buscaremos aquellas filas en las que la fecha sea NAN y las eliminaremos para poder realizar  el análisis, que han sido las siguientes filas
+
+```{r missing dates}
+missing_dates_ind <- which(is.na(repository_sepsis [,dateColumn]))
+missing_dates_rows <- repository_sepsis[missing_dates_ind,dateColumn]
+
+view(missing_dates_rows)
+
+```
+
+Ahora podemos calcular la integridad y trazar los resultados por mes.
+
+```{r completeness}
+
+ ## Completeness by column
+resCompletenessByColumn = apply.monthly(zooRepository, FUN=dimCompletenessByColumn)
+plot(resCompletenessByColumn,xlab = "Date", ylab = names(resCompletenessByColumn), main = "Completeness (%)", ylim=c(0,100), cex.lab=0.5)
+
+## Completeness of the data set
+resCompleteness = apply.monthly(zooRepository, FUN=dimCompleteness)
+plot(resCompleteness,xlab = "Date", ylab = names(resCompleteness), main = "Completeness of the dataset (%)", ylim=c(0,100), cex.lab=0.5)
+
+## Mean Completeness of the data set
+meanResCompleteness = mean(resCompleteness)
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
